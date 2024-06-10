@@ -2,6 +2,7 @@
 
 
 library(shiny)
+library(gt)
 
 
 ui <- fluidPage(
