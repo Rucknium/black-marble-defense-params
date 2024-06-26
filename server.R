@@ -115,6 +115,18 @@ CE <- function(f, n, m, b) {
 # Cost effectiveness
 
 
+fee.to.achieve.min.acceptable.eff.ring.size <- function(b, r, n, min.acceptable.eff.ring.size) {
+  2 * b / (
+    r * ( (n - 1) / (min.acceptable.eff.ring.size - 1) - 1) * (975 + 35 * n)
+  )
+}
+
+
+fee.alice.budget.constraint <- function(max.cost, n, m) {
+  (max.cost - C_d(n, m)) / C_u(1, n)
+}
+
+
 
 status.quo.no.attack.block.size <- C_u(1, 16)
 status.quo.no.attack.block.size.one.year <-
@@ -143,12 +155,16 @@ stopifnot(nested.model.test[["Pr(>F)"]][2] == 0)
 # nested.model.test[["Pr(>F)"]][2] == 0 means p value is < 2.2e-16
 
 
-alice.best.response <- function(b, f.range, n.range, m = 2, min.acceptable.eff.ring.size = 5, max.cost = 0.05, force.eval.point = NULL, plot = TRUE) {
+alice.best.response <- function(b, f.range, n.range, m = 2, min.acceptable.eff.ring.size = 5,
+  max.cost = 36, trace.min.acceptable.eff.ring.size = FALSE, trace.max.cost = FALSE, force.eval.point = NULL, plot = TRUE) {
   
   f.n.range <- expand.grid(f = f.range, n = n.range)
   
   b <- b / (24*30)
   # Convert to budget per block
+  
+  max.cost <- max.cost / (24*30)
+  # Convert to budget per block  
   
   
   if ( ! is.null(force.eval.point)) {
@@ -191,6 +207,102 @@ alice.best.response <- function(b, f.range, n.range, m = 2, min.acceptable.eff.r
         which.min(contour.contents[eff.ring.size.evaluated >= min.acceptable.eff.ring.size])]
     
     cost.effectiveness.at.optimum <- contour.contents[f.n.range$f == restricted.min$f & f.n.range$n == restricted.min$n]
+    
+    min.acceptable.eff.ring.size.as.equality.constraint.fee <-
+      fee.to.achieve.min.acceptable.eff.ring.size(b, r, n.range, min.acceptable.eff.ring.size)
+    
+    eq.constraint.restrictions <- min.acceptable.eff.ring.size.as.equality.constraint.fee %between% range(f.range)
+    
+    equality.restriction.CE <- CE(min.acceptable.eff.ring.size.as.equality.constraint.fee, n.range, m, b)
+    
+    minimizers.at.min.eff.ring.size <- data.frame(
+      f = min.acceptable.eff.ring.size.as.equality.constraint.fee[eq.constraint.restrictions][
+        which.min(equality.restriction.CE[eq.constraint.restrictions])],
+      n = n.range[eq.constraint.restrictions][
+        which.min(equality.restriction.CE[eq.constraint.restrictions])]
+    )
+    
+    minimizers.at.min.eff.ring.size.range <- vector("list", length(n.range))
+    
+    if (trace.min.acceptable.eff.ring.size) {
+      
+      range.set <- union(min.acceptable.eff.ring.size:min(n.range), n.range)
+      
+      for (min.acceptable.eff.ring.size.range in range.set) {
+        
+        min.acceptable.eff.ring.size.as.equality.constraint.fee <-
+          fee.to.achieve.min.acceptable.eff.ring.size(b, r, n.range, min.acceptable.eff.ring.size.range)
+        
+        eq.constraint.restrictions <- min.acceptable.eff.ring.size.as.equality.constraint.fee %between% range(f.range)
+        
+        equality.restriction.CE <- CE(min.acceptable.eff.ring.size.as.equality.constraint.fee, n.range, m, b)
+        
+        if (
+          length(min.acceptable.eff.ring.size.as.equality.constraint.fee[eq.constraint.restrictions][
+            which.min(equality.restriction.CE[eq.constraint.restrictions])]) > 0
+        ) {
+          # If the constraint set is empty, don't make a point
+          minimizers.at.min.eff.ring.size.range[[which(min.acceptable.eff.ring.size.range == range.set)]] <-
+            data.frame(
+              f = min.acceptable.eff.ring.size.as.equality.constraint.fee[eq.constraint.restrictions][
+                which.min(equality.restriction.CE[eq.constraint.restrictions])],
+              n = n.range[eq.constraint.restrictions][
+                which.min(equality.restriction.CE[eq.constraint.restrictions])],
+              eff.ring.size = min.acceptable.eff.ring.size.range
+            )
+          
+        }
+        
+      }
+      
+      minimizers.at.min.eff.ring.size.range <- data.table::rbindlist(minimizers.at.min.eff.ring.size.range)
+      # print(minimizers.at.min.eff.ring.size.range)
+      
+    }
+    
+    alice.budget.line <- data.frame(
+      f = fee.alice.budget.constraint(max.cost, n.range, m),
+      n = n.range
+    )
+    
+    alice.budget.line <- alice.budget.line[alice.budget.line$f %between% range(f.range), ]
+    
+    if (nrow(alice.budget.line) > 0) {
+      which.min.CE.at.budget.line <- which.min(CE(alice.budget.line$f, alice.budget.line$n, m, b))
+    }
+    
+    # print(alice.budget.line[which.min.CE.at.budget.line, ])
+    
+    
+    if (trace.max.cost) {
+      
+      alice.budget.line.range <- seq(0, max.cost, length.out = 50)
+      
+      CE.at.budget.line.range <- vector("list", length(alice.budget.line.range))
+      
+      for (alice.budget.line.point in alice.budget.line.range) {
+        
+        alice.budget.line.range.temp <- data.frame(
+          f = fee.alice.budget.constraint(alice.budget.line.point, n.range, m),
+          n = n.range
+        )
+        
+        alice.budget.line.range.temp <- alice.budget.line.range.temp[alice.budget.line.range.temp$f %between% range(f.range), , drop = FALSE]
+        
+        if (nrow(alice.budget.line.range.temp) > 0) {
+          
+          CE.at.budget.line.range[[which(alice.budget.line.range == alice.budget.line.point)]] <-
+            alice.budget.line.range.temp[which.min(CE(alice.budget.line.range.temp$f, alice.budget.line.range.temp$n, m, b)), , drop = FALSE]
+          
+        }
+        
+      }
+      
+      CE.at.budget.line.range <- data.table::rbindlist(CE.at.budget.line.range)
+      
+    }
+    
+    # print(CE.at.budget.line.range)
     
     
   }
@@ -312,9 +424,9 @@ alice.best.response <- function(b, f.range, n.range, m = 2, min.acceptable.eff.r
             "                github.com/Rucknium"))
       legend("bottomright",
         legend = c("Optimal fee and ring size, unrestricted", "Optimal fee and ring size, restricted",
-          "Minimum acceptable effective ring size"), xpd = NA, inset = c(-0.175, -0.15),
-        pch = c(17, 16, 15, NA), lty = c(NA, NA, NA, 1),
-        col = c("blue", "green4", "red", "black"), pt.cex = c(2, 4, 2, NA), lwd = 2, cex = 1.1)
+          "Minimum acceptable effective ring size", "Best fee & ring size along budget line"), xpd = NA, inset = c(-0.175, -0.15),
+        pch = c(17, 16, 15, 18), lty = c(NA, NA, NA, NA),
+        col = c("blue", "green4", "red", "purple"), pt.cex = c(2, 4, 2, 3), lwd = 2, cex = 1.1)
       title(xlab = "Minimum fee (nanoneros per byte)", line = 2.25)
       x.axis.ticks <- seq(min(f.range), max(f.range), by = 2e-08)
       axis(1, at = x.axis.ticks, labels = x.axis.ticks * 10^9)
@@ -327,9 +439,23 @@ alice.best.response <- function(b, f.range, n.range, m = 2, min.acceptable.eff.r
       
       points(restricted.min, pch = 16, col = "green4", cex = 4, xpd = NA)
       points(unrestricted.min, pch = 17, col = "blue", cex = 2, xpd = NA)
-     # points(minimizers.at.min.eff.ring.size, pch = 15, col = "red", cex = 2, xpd = NA)
+      points(minimizers.at.min.eff.ring.size, pch = 15, col = "red", cex = 2, xpd = NA)
+      # print(minimizers.at.min.eff.ring.size)
+      if (trace.min.acceptable.eff.ring.size && nrow(minimizers.at.min.eff.ring.size.range) > 0) {
+        text(minimizers.at.min.eff.ring.size.range[, .(f, n)],
+          labels = minimizers.at.min.eff.ring.size.range$eff.ring.size, col = "red")
+      }
       
-     # lines(alice.budget.line)
+      if (nrow(alice.budget.line) > 0) {
+        points(alice.budget.line[which.min.CE.at.budget.line, ], pch = 18, col = "purple", cex = 3, xpd = NA)
+        lines(alice.budget.line, col = "purple")
+      }
+      
+      # print(CE.at.budget.line.range)
+      
+      if (trace.max.cost && nrow(CE.at.budget.line.range) > 0) {
+        lines(CE.at.budget.line.range, col = "purple", lty = 3, lwd = 2)
+      }
       
       
     }
@@ -388,42 +514,70 @@ server <- function(input, output, session) {
   react.table <- reactiveVal(NULL)
   
   
-  output$distPlot <- renderPlot({
   
-    f.range <- seq(input$fmin * 1e-09, input$fmax * 1e-09, length.out = 40)
-    n.range <- seq(input$nmin, input$nmax, by = 1)
-    n.range.whittle <- unique(round(seq(1, length(n.range),  length.out = 50)))
-    n.range <- n.range[n.range.whittle]
-    # If more than 50 different ring sizes, then whittle down the number of elements
-    # that have to be computed
-    
-    alice.results <- alice.best.response(b = input$b, f.range, n.range, m = input$m,
-      min.acceptable.eff.ring.size = input$min.acceptable.eff.ring.size,
-      max.cost = 0.05, force.eval.point = NULL, plot = TRUE)
-    
-    alice.results <- alice.results[, .(
-      b_per_day, ring_size, fee_per_byte, cost_effectiveness,
-      user_tx_size_2in_2out = user_tx_size_2in_2out,
-      user_tx_cost_2in_2out = user_tx_cost_2in_2out * 100,
-      verif_time_2in_2out,
-      block_size_no_attack = block_size_no_attack / 1000,
-      verif_time_no_attack,
-      one_year_blockchain_growth_unpruned_no_attack,
-      one_year_blockchain_growth_pruned_no_attack,
-      one_year_blockchain_growth_unpruned_attack,
-      one_year_blockchain_growth_pruned_attack,
-      effective_ring_size,
-      block_size_attack = block_size_attack / 1000,
-      verif_time_attack
-    )]
-    
-    isolate(react.table(rbind(alice.results, react.table())))
-    
-    },
+  
+  output$contourPlot <- renderPlot({
+    input$submit
+    isolate({
+      f.range <- seq(input$fmin * 1e-09, input$fmax * 1e-09, length.out = 40)
+      n.range <- seq(input$nmin, input$nmax, by = 1)
+      n.range.whittle <- unique(round(seq(1, length(n.range),  length.out = 50)))
+      n.range <- n.range[n.range.whittle]
+      # If more than 50 different ring sizes, then whittle down the number of elements
+      # that have to be computed
+      
+      alice.results <- alice.best.response(b = input$b, f.range, n.range, m = input$m,
+        min.acceptable.eff.ring.size = input$min.acceptable.eff.ring.size,
+        max.cost = input$max.cost,
+        trace.min.acceptable.eff.ring.size = input$trace.min.acceptable.eff.ring.size,
+        trace.max.cost = input$trace.max.cost,
+        force.eval.point = NULL, plot = TRUE)
+      
+      alice.results <- alice.results[, .(
+        b_per_day, ring_size, fee_per_byte, cost_effectiveness,
+        user_tx_size_2in_2out = user_tx_size_2in_2out,
+        user_tx_cost_2in_2out = user_tx_cost_2in_2out * 100,
+        verif_time_2in_2out,
+        block_size_no_attack = block_size_no_attack / 1000,
+        verif_time_no_attack,
+        one_year_blockchain_growth_unpruned_no_attack,
+        one_year_blockchain_growth_pruned_no_attack,
+        one_year_blockchain_growth_unpruned_attack,
+        one_year_blockchain_growth_pruned_attack,
+        effective_ring_size,
+        block_size_attack = block_size_attack / 1000,
+        verif_time_attack
+      )]
+      
+      react.table(rbind(alice.results, react.table()))
+      
+      
+    })
+  },
     width = 800, height = 900)
+  # ,
+  #  ignoreNULL = FALSE
+  # ignoreNULL = FALSE means that this fires on page load instead of waiting for
+  # the submit button to be pressed
   
   
-  output$table <- render_gt(expr = latex.table(react.table()))
+  
+  observe(
+    output$table <- render_gt(expr = latex.table(react.table()))
+  )
+  
+  
+  observe({
+    input$reset
+    updateNumericInput(inputId = "b", value = 2.5)
+    updateNumericInput(inputId = "m", value = 2)
+    updateNumericInput(inputId = "fmin", value = 10)
+    updateNumericInput(inputId = "fmax", value = 400)
+    updateNumericInput(inputId = "nmin", value = 11)
+    updateNumericInput(inputId = "nmax", value = 60)
+    updateNumericInput(inputId = "min.acceptable.eff.ring.size", value = 5)
+    updateNumericInput(inputId = "max.cost", value = 36)
+  })
   
 }
 
